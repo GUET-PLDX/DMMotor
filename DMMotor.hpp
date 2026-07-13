@@ -81,6 +81,7 @@ class DMMotor : public LibXR::Application, public Motor {
           const Param& param)
       : param_(param),
         feedback_{},
+        startup_time_(LibXR::Timebase::GetMicroseconds()),
         can_(hw.template FindOrExit<LibXR::CAN>({param_.can_bus_name})) {
     UNUSED(app);
 
@@ -156,12 +157,26 @@ class DMMotor : public LibXR::Application, public Motor {
   void Relax() override { Disable(); }
 
   LibXR::ErrorCode Update() override {
+    const auto NOW = LibXR::Timebase::GetMicroseconds();
+    bool get_feedback = false;
     LibXR::CAN::ClassicPack pack;
     while (recv_queue_.Pop(pack) == LibXR::ErrorCode::OK) {
-      this->Decode(pack);
-      last_online_time_ = LibXR::Timebase::GetMicroseconds();
+      Decode(pack);
+      get_feedback = true;
     }
-    return LibXR::ErrorCode::OK;
+
+    if (get_feedback) {
+      feedback_received_ = true;
+      last_online_time_ = NOW;
+      return LibXR::ErrorCode::OK;
+    }
+
+    const auto AGE =
+        feedback_received_ ? NOW - last_online_time_ : NOW - startup_time_;
+    const uint64_t TIMEOUT =
+        feedback_received_ ? FEEDBACK_TIMEOUT_US : STARTUP_GRACE_US;
+    return AGE.ToMicrosecond() <= TIMEOUT ? LibXR::ErrorCode::OK
+                                          : LibXR::ErrorCode::NO_RESPONSE;
   }
 
   const Feedback& GetFeedback() override { return feedback_; }
@@ -212,10 +227,14 @@ class DMMotor : public LibXR::Application, public Motor {
   void OnMonitor() override {}
 
  private:
-  uint64_t last_online_time_; /* 方便查看电机是否在线 */
+  static constexpr uint64_t STARTUP_GRACE_US = 200000U;
+  static constexpr uint64_t FEEDBACK_TIMEOUT_US = 150000U;
   Param param_;
   LSB lsb_;
   Motor::Feedback feedback_;
+  LibXR::MicrosecondTimestamp startup_time_{};
+  LibXR::MicrosecondTimestamp last_online_time_{};
+  bool feedback_received_ = false;
   LibXR::CAN* can_;
   LibXR::MPMCQueue<LibXR::CAN::ClassicPack> recv_queue_{2};
 
