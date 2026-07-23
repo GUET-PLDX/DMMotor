@@ -18,6 +18,7 @@ depends: []
 #include <cstdint>
 #include <cstring>
 
+#include "DMMotorCodec.hpp"
 #include "Motor.hpp"
 #include "app_framework.hpp"
 #include "can.hpp"
@@ -238,22 +239,6 @@ class DMMotor : public LibXR::Application, public Motor {
   LibXR::CAN* can_;
   LibXR::MPMCQueue<LibXR::CAN::ClassicPack> recv_queue_{2};
 
-  /*---------------------工具函数---------------------------------------------*/
-  int FloatToUint(float x, float x_min, float x_max, int bits) {
-    float span = x_max - x_min;
-    float offset = x_min;
-    return static_cast<int>((x - offset) *
-                            (static_cast<float>((1 << bits) - 1)) / span);
-  }
-
-  float UintToFloat(int x_int, float x_min, float x_max, int bits) {
-    float span = x_max - x_min;
-    float offset = x_min;
-    return (static_cast<float>(x_int)) * span /
-               (static_cast<float>((1 << bits) - 1)) +
-           offset;
-  }
-
   /**
    * @brief CAN 接收回调的静态包装函数
    * @details
@@ -277,18 +262,21 @@ class DMMotor : public LibXR::Application, public Motor {
                                  motor_state == DM_MOTOR_STATE_ENABLED
                              ? 0
                              : motor_state;
+    const uint16_t POSITION_RAW =
+        (static_cast<uint16_t>(pack.data[1]) << 8U) | pack.data[2];
     feedback_.position =
-        UintToFloat(static_cast<int16_t>((pack.data[1] << 8) | pack.data[2]),
-                    -lsb_.P_MAX, lsb_.P_MAX, 16);
+        DMMotorCodec::UintToFloat(POSITION_RAW, -lsb_.P_MAX, lsb_.P_MAX, 16);
 
-    feedback_.omega = UintToFloat(
-        static_cast<int16_t>((pack.data[3] << 4) | (pack.data[4] >> 4)),
-        -lsb_.V_MAX, lsb_.V_MAX, 12);
+    const uint16_t VELOCITY_RAW =
+        (static_cast<uint16_t>(pack.data[3]) << 4U) | (pack.data[4] >> 4U);
+    feedback_.omega =
+        DMMotorCodec::UintToFloat(VELOCITY_RAW, -lsb_.V_MAX, lsb_.V_MAX, 12);
     feedback_.velocity =
         feedback_.omega * 60.0f / static_cast<float>(LibXR::TWO_PI);
-    feedback_.torque = UintToFloat(
-        static_cast<int16_t>(((pack.data[4] & 0xF) << 8) | pack.data[5]),
-        -lsb_.T_MAX, lsb_.T_MAX, 12);
+    const uint16_t TORQUE_RAW =
+        (static_cast<uint16_t>(pack.data[4] & 0xFU) << 8U) | pack.data[5];
+    feedback_.torque =
+        DMMotorCodec::UintToFloat(TORQUE_RAW, -lsb_.T_MAX, lsb_.T_MAX, 12);
     feedback_.temp = static_cast<float>(
         pack.data[6] > pack.data[7] ? pack.data[6] : pack.data[7]);
 
@@ -313,29 +301,39 @@ class DMMotor : public LibXR::Application, public Motor {
                   static_cast<unsigned>(param_.can_id));
       return;
     }
-    pos = std::clamp(pos, -lsb_.P_MAX, lsb_.P_MAX);
-    vel = std::clamp(vel, -lsb_.V_MAX, lsb_.V_MAX);
-    tor = std::clamp(tor, -lsb_.T_MAX, lsb_.T_MAX);
 
-    float send_pos = param_.reverse ? -pos : pos;
-    float send_vel = param_.reverse ? -vel : vel;
-    float send_tor = param_.reverse ? -tor : tor;
+    const auto COMMAND = DMMotorCodec::NormalizeMitCommand(
+        {.pos = pos, .vel = vel, .kp = kp, .kd = kd, .tor = tor});
+    pos = COMMAND.pos;
+    vel = COMMAND.vel;
+    kp = COMMAND.kp;
+    kd = COMMAND.kd;
+    tor = COMMAND.tor;
 
-    uint16_t pos_u = FloatToUint(send_pos, -lsb_.P_MAX, lsb_.P_MAX, 16);
-    uint16_t vel_u = FloatToUint(send_vel, -lsb_.V_MAX, lsb_.V_MAX, 12);
-    uint16_t tor_u = FloatToUint(send_tor, -lsb_.T_MAX, lsb_.T_MAX, 12);
-    uint16_t kp_u = FloatToUint(kp, lsb_.KP_MIN, lsb_.KP_MAX, 12);
-    uint16_t kd_u = FloatToUint(kd, lsb_.KD_MIN, lsb_.KD_MAX, 12);
+    const float SEND_POS = param_.reverse ? -pos : pos;
+    const float SEND_VEL = param_.reverse ? -vel : vel;
+    const float SEND_TOR = param_.reverse ? -tor : tor;
+
+    const uint16_t POS_U =
+        DMMotorCodec::FloatToUintClamped(SEND_POS, -lsb_.P_MAX, lsb_.P_MAX, 16);
+    const uint16_t VEL_U =
+        DMMotorCodec::FloatToUintClamped(SEND_VEL, -lsb_.V_MAX, lsb_.V_MAX, 12);
+    const uint16_t TOR_U =
+        DMMotorCodec::FloatToUintClamped(SEND_TOR, -lsb_.T_MAX, lsb_.T_MAX, 12);
+    const uint16_t KP_U =
+        DMMotorCodec::FloatToUintClamped(kp, lsb_.KP_MIN, lsb_.KP_MAX, 12);
+    const uint16_t KD_U =
+        DMMotorCodec::FloatToUintClamped(kd, lsb_.KD_MIN, lsb_.KD_MAX, 12);
 
     uint8_t data[8];
-    data[0] = (pos_u >> 8) & 0xFF;
-    data[1] = pos_u & 0xFF;
-    data[2] = (vel_u >> 4) & 0xFF;
-    data[3] = ((vel_u & 0xF) << 4) | ((kp_u >> 8) & 0xF);
-    data[4] = kp_u & 0xFF;
-    data[5] = (kd_u >> 4) & 0xFF;
-    data[6] = ((kd_u & 0xF) << 4) | ((tor_u >> 8) & 0xF);
-    data[7] = tor_u & 0xFF;
+    data[0] = (POS_U >> 8) & 0xFF;
+    data[1] = POS_U & 0xFF;
+    data[2] = (VEL_U >> 4) & 0xFF;
+    data[3] = ((VEL_U & 0xF) << 4) | ((KP_U >> 8) & 0xF);
+    data[4] = KP_U & 0xFF;
+    data[5] = (KD_U >> 4) & 0xFF;
+    data[6] = ((KD_U & 0xF) << 4) | ((TOR_U >> 8) & 0xF);
+    data[7] = TOR_U & 0xFF;
 
     uint16_t id = param_.can_id;
     LibXR::CAN::ClassicPack tx_pack{};
