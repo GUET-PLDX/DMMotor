@@ -1,8 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
+
+#include "float_encoder.hpp"
 
 namespace DMMotorCodec {
 struct MitCommand {
@@ -22,20 +23,14 @@ inline MitCommand NormalizeMitCommand(MitCommand command) {
   return command;
 }
 
-inline float UintToFloat(uint16_t value, float minimum, float maximum,
-                         uint8_t bits) {
-  const uint32_t FULL_SCALE = (uint32_t{1} << bits) - 1U;
-  return minimum + static_cast<float>(value) * (maximum - minimum) /
-                       static_cast<float>(FULL_SCALE);
+template <int Bits>
+inline float UintToFloat(uint16_t value, float minimum, float maximum) {
+  return LibXR::FloatEncoder<Bits>(minimum, maximum).Decode(value);
 }
 
-inline uint16_t FloatToUintClamped(float value, float minimum, float maximum,
-                                   uint8_t bits) {
-  // MITControl validates the complete command before calling this helper.
-  const float CLAMPED = std::clamp(value, minimum, maximum);
-  const uint32_t FULL_SCALE = (uint32_t{1} << bits) - 1U;
-  return static_cast<uint16_t>((CLAMPED - minimum) *
-                               static_cast<float>(FULL_SCALE) /
-                               (maximum - minimum));
+template <int Bits>
+inline uint16_t FloatToUintClamped(float value, float minimum, float maximum) {
+  return static_cast<uint16_t>(
+      LibXR::FloatEncoder<Bits>(minimum, maximum).Encode(value));
 }
 }  // namespace DMMotorCodec

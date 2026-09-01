@@ -16,16 +16,16 @@ depends: []
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 
 #include "DMMotorCodec.hpp"
 #include "Motor.hpp"
 #include "app_framework.hpp"
 #include "can.hpp"
 #include "libxr_def.hpp"
+#include "libxr_mem.hpp"
 #include "libxr_type.hpp"
 
-#define DM4310_PMAX (6.283185f)
+#define DM4310_PMAX (static_cast<float>(LibXR::TWO_PI))
 #define DM4310_VMAX (30.0f)
 #define DM4310_TMAX (10.0f)
 #define DM4310_KP_MIN (0.0f)
@@ -36,7 +36,7 @@ depends: []
 #define DM_MOTOR_STATE_DISABLED (0x0u)
 #define DM_MOTOR_STATE_ENABLED (0x1u)
 
-#define DM8009_PMAX (12.56637f)
+#define DM8009_PMAX (static_cast<float>(2.0 * LibXR::TWO_PI))
 #define DM8009_VMAX (45.0f)
 #define DM8009_TMAX (54.0f)
 #define DM8009_KP_MIN (0.0f)
@@ -138,7 +138,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -151,7 +151,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -209,7 +209,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -221,7 +221,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -265,18 +265,18 @@ class DMMotor : public LibXR::Application, public Motor {
     const uint16_t POSITION_RAW =
         (static_cast<uint16_t>(pack.data[1]) << 8U) | pack.data[2];
     feedback_.position =
-        DMMotorCodec::UintToFloat(POSITION_RAW, -lsb_.P_MAX, lsb_.P_MAX, 16);
+        DMMotorCodec::UintToFloat<16>(POSITION_RAW, -lsb_.P_MAX, lsb_.P_MAX);
 
     const uint16_t VELOCITY_RAW =
         (static_cast<uint16_t>(pack.data[3]) << 4U) | (pack.data[4] >> 4U);
     feedback_.omega =
-        DMMotorCodec::UintToFloat(VELOCITY_RAW, -lsb_.V_MAX, lsb_.V_MAX, 12);
+        DMMotorCodec::UintToFloat<12>(VELOCITY_RAW, -lsb_.V_MAX, lsb_.V_MAX);
     feedback_.velocity =
         feedback_.omega * 60.0f / static_cast<float>(LibXR::TWO_PI);
     const uint16_t TORQUE_RAW =
         (static_cast<uint16_t>(pack.data[4] & 0xFU) << 8U) | pack.data[5];
     feedback_.torque =
-        DMMotorCodec::UintToFloat(TORQUE_RAW, -lsb_.T_MAX, lsb_.T_MAX, 12);
+        DMMotorCodec::UintToFloat<12>(TORQUE_RAW, -lsb_.T_MAX, lsb_.T_MAX);
     feedback_.temp = static_cast<float>(
         pack.data[6] > pack.data[7] ? pack.data[6] : pack.data[7]);
 
@@ -315,15 +315,15 @@ class DMMotor : public LibXR::Application, public Motor {
     const float SEND_TOR = param_.reverse ? -tor : tor;
 
     const uint16_t POS_U =
-        DMMotorCodec::FloatToUintClamped(SEND_POS, -lsb_.P_MAX, lsb_.P_MAX, 16);
+        DMMotorCodec::FloatToUintClamped<16>(SEND_POS, -lsb_.P_MAX, lsb_.P_MAX);
     const uint16_t VEL_U =
-        DMMotorCodec::FloatToUintClamped(SEND_VEL, -lsb_.V_MAX, lsb_.V_MAX, 12);
+        DMMotorCodec::FloatToUintClamped<12>(SEND_VEL, -lsb_.V_MAX, lsb_.V_MAX);
     const uint16_t TOR_U =
-        DMMotorCodec::FloatToUintClamped(SEND_TOR, -lsb_.T_MAX, lsb_.T_MAX, 12);
+        DMMotorCodec::FloatToUintClamped<12>(SEND_TOR, -lsb_.T_MAX, lsb_.T_MAX);
     const uint16_t KP_U =
-        DMMotorCodec::FloatToUintClamped(kp, lsb_.KP_MIN, lsb_.KP_MAX, 12);
+        DMMotorCodec::FloatToUintClamped<12>(kp, lsb_.KP_MIN, lsb_.KP_MAX);
     const uint16_t KD_U =
-        DMMotorCodec::FloatToUintClamped(kd, lsb_.KD_MIN, lsb_.KD_MAX, 12);
+        DMMotorCodec::FloatToUintClamped<12>(kd, lsb_.KD_MIN, lsb_.KD_MAX);
 
     uint8_t data[8];
     data[0] = (POS_U >> 8) & 0xFF;
@@ -340,7 +340,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -372,7 +372,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 8);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
     can_->AddMessage(tx_pack);
   }
 
@@ -399,7 +399,7 @@ class DMMotor : public LibXR::Application, public Motor {
     tx_pack.id = id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
-    memcpy(tx_pack.data, data, 4);
+    LibXR::Memory::FastCopy(tx_pack.data, data, 4);
     can_->AddMessage(tx_pack);
   }
 };

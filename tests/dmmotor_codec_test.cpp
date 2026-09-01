@@ -4,18 +4,27 @@
 #include <limits>
 
 #include "../DMMotorCodec.hpp"
+#include "float_encoder.hpp"
+#include "libxr_def.hpp"
 
 int main() {
-  constexpr float PMAX = 6.283185f;
-  assert(std::fabs(DMMotorCodec::UintToFloat(0x0000U, -PMAX, PMAX, 16) + PMAX) <
+  constexpr float PMAX = static_cast<float>(LibXR::TWO_PI);
+  assert(std::fabs(DMMotorCodec::UintToFloat<16>(0x0000U, -PMAX, PMAX) + PMAX) <
          1e-5f);
-  assert(std::fabs(DMMotorCodec::UintToFloat(0x8000U, -PMAX, PMAX, 16)) <
+  assert(std::fabs(DMMotorCodec::UintToFloat<16>(0x8000U, -PMAX, PMAX)) <
          2e-4f);
-  assert(std::fabs(DMMotorCodec::UintToFloat(0xffffU, -PMAX, PMAX, 16) - PMAX) <
+  assert(std::fabs(DMMotorCodec::UintToFloat<16>(0xffffU, -PMAX, PMAX) - PMAX) <
          1e-5f);
-  assert(DMMotorCodec::FloatToUintClamped(-1.0f, 0.0f, 500.0f, 12) == 0U);
-  assert(DMMotorCodec::FloatToUintClamped(600.0f, 0.0f, 500.0f, 12) == 0xfffU);
-  assert(DMMotorCodec::FloatToUintClamped(0.0f, 0.0f, 5.0f, 12) == 0U);
+  assert(DMMotorCodec::FloatToUintClamped<12>(-1.0f, 0.0f, 500.0f) == 0U);
+  assert(DMMotorCodec::FloatToUintClamped<12>(600.0f, 0.0f, 500.0f) == 0xfffU);
+  assert(DMMotorCodec::FloatToUintClamped<12>(0.0f, 0.0f, 5.0f) == 0U);
+
+  const LibXR::FloatEncoder<12> encoder(0.0f, 5.0f);
+  assert(DMMotorCodec::FloatToUintClamped<12>(2.5f, 0.0f, 5.0f) ==
+         encoder.Encode(2.5f));
+  assert(std::fabs(
+             DMMotorCodec::UintToFloat<12>(encoder.Encode(2.5f), 0.0f, 5.0f) -
+             encoder.Decode(encoder.Encode(2.5f))) < 1e-6f);
 
   constexpr DMMotorCodec::MitCommand VALID = {
       .pos = 1.0f, .vel = 2.0f, .kp = 3.0f, .kd = 4.0f, .tor = 5.0f};
