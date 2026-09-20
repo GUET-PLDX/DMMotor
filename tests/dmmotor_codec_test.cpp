@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "../DMMotorCodec.hpp"
+#include "../DMMotor.hpp"
 #include "float_encoder.hpp"
 #include "libxr_def.hpp"
 
