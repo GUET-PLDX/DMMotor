@@ -200,15 +200,18 @@ class DMMotor : public LibXR::Application, public Motor {
     if (get_feedback) {
       feedback_received_ = true;
       last_online_time_ = NOW;
-      return LibXR::ErrorCode::OK;
     }
 
+    return IsOnline() ? LibXR::ErrorCode::OK : LibXR::ErrorCode::NO_RESPONSE;
+  }
+
+  bool IsOnline() const override {
+    const auto NOW = LibXR::Timebase::GetMicroseconds();
     const auto AGE =
         feedback_received_ ? NOW - last_online_time_ : NOW - startup_time_;
     const uint64_t TIMEOUT =
         feedback_received_ ? FEEDBACK_TIMEOUT_US : STARTUP_GRACE_US;
-    return AGE.ToMicrosecond() <= TIMEOUT ? LibXR::ErrorCode::OK
-                                          : LibXR::ErrorCode::NO_RESPONSE;
+    return AGE.ToMicrosecond() <= TIMEOUT;
   }
 
   const Feedback& GetFeedback() override { return feedback_; }
