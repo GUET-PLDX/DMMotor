@@ -161,30 +161,10 @@ class DMMotor : public LibXR::Application, public Motor {
   }
 
   /*使能*/
-  void Enable() override {
-    /*使能can包*/
-    uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
-    uint16_t id = param_.can_id;
-    LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
-    tx_pack.type = LibXR::CAN::Type::STANDARD;
-    tx_pack.dlc = 8;
-    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
-    can_->AddMessage(tx_pack);
-  }
+  void Enable() override { SendSpecialCommand(0xFC); }
 
   /*失能*/
-  void Disable() override {
-    /*失能can包*/
-    uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD};
-    uint16_t id = param_.can_id;
-    LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
-    tx_pack.type = LibXR::CAN::Type::STANDARD;
-    tx_pack.dlc = 8;
-    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
-    can_->AddMessage(tx_pack);
-  }
+  void Disable() override { SendSpecialCommand(0xFD); }
 
   void Relax() override { Disable(); }
 
@@ -236,28 +216,10 @@ class DMMotor : public LibXR::Application, public Motor {
   }
 
   /*重置错误状态*/
-  void ClearError() override {
-    uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB};
-    uint16_t id = param_.can_id;
-    LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
-    tx_pack.type = LibXR::CAN::Type::STANDARD;
-    tx_pack.dlc = 8;
-    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
-    can_->AddMessage(tx_pack);
-  }
+  void ClearError() override { SendSpecialCommand(0xFB); }
 
   /*将当前位置设成零点*/
-  void SaveZeroPoint() override {
-    uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
-    uint16_t id = param_.can_id;
-    LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
-    tx_pack.type = LibXR::CAN::Type::STANDARD;
-    tx_pack.dlc = 8;
-    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
-    can_->AddMessage(tx_pack);
-  }
+  void SaveZeroPoint() override { SendSpecialCommand(0xFE); }
 
   void OnMonitor() override {}
 
@@ -379,6 +341,17 @@ class DMMotor : public LibXR::Application, public Motor {
   }
 
  private:
+  /*特殊命令帧：0xFF x7 + 命令字节（FC 使能 / FD 失能 / FB 清错 / FE 置零）*/
+  void SendSpecialCommand(uint8_t command) {
+    uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, command};
+    LibXR::CAN::ClassicPack tx_pack{};
+    tx_pack.id = param_.can_id;
+    tx_pack.type = LibXR::CAN::Type::STANDARD;
+    tx_pack.dlc = 8;
+    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
+    can_->AddMessage(tx_pack);
+  }
+
   void PosControl(float pos, float vel) {
     if (this->feedback_.temp > 90.0f) {
       XR_LOG_WARN("motor %u high temperature detected",
