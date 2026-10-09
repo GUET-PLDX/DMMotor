@@ -8,6 +8,16 @@
 #include "libxr_def.hpp"
 
 int main() {
+  LibXR::CAN::ClassicPack frame{};
+  frame.type = LibXR::CAN::Type::STANDARD;
+  frame.dlc = 8;
+  assert(DMMotorCodec::IsFeedbackFrame(frame));
+  frame.dlc = 7;
+  assert(!DMMotorCodec::IsFeedbackFrame(frame));
+  frame.dlc = 8;
+  frame.type = LibXR::CAN::Type::REMOTE_STANDARD;
+  assert(!DMMotorCodec::IsFeedbackFrame(frame));
+
   constexpr float PMAX = static_cast<float>(LibXR::TWO_PI);
   assert(std::fabs(DMMotorCodec::UintToFloat<16>(0x0000U, -PMAX, PMAX) + PMAX) <
          1e-5f);

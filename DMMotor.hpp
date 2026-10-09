@@ -27,6 +27,10 @@ depends: []
 #include "libxr_type.hpp"
 
 namespace DMMotorCodec {
+inline bool IsFeedbackFrame(const LibXR::CAN::ClassicPack& pack) {
+  return pack.type == LibXR::CAN::Type::STANDARD && pack.dlc == 8;
+}
+
 struct MitCommand {
   float pos;
   float vel;
@@ -173,6 +177,9 @@ class DMMotor : public LibXR::Application, public Motor {
     bool get_feedback = false;
     LibXR::CAN::ClassicPack pack;
     while (recv_queue_.Pop(pack) == LibXR::ErrorCode::OK) {
+      if (!DMMotorCodec::IsFeedbackFrame(pack)) {
+        continue;
+      }
       Decode(pack);
       get_feedback = true;
     }
