@@ -3,7 +3,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 module_dir="$(cd "${script_dir}/.." && pwd)"
 workspace_root="$(cd "${module_dir}/../.." && pwd)"
-libxr_dir="${workspace_root}/Middlewares/Third_Party/LibXR"
+libxr_dir="${workspace_root}/.tooling/LibXR-v2.0.1"
 include_flags=()
 while IFS= read -r -d '' include_dir; do
   include_flags+=(-isystem "${include_dir}")

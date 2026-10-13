@@ -2,14 +2,6 @@
 // clang-format off
 /* === MODULE MANIFEST V2 ===
 module_description: No description provided
-constructor_args:
-  - param:
-      model: DMMotor::Model::MOTOR_DM4310
-      reverse: false
-      can_id: 1
-      can_bus_name: can1
-template_args: []
-required_hardware: []
 depends: []
 === END MANIFEST === */
 // clang-format on
@@ -19,9 +11,9 @@ depends: []
 #include <cstdint>
 
 #include "Motor.hpp"
-#include "app_framework.hpp"
 #include "can.hpp"
 #include "float_encoder.hpp"
+#include "libxr.hpp"
 #include "libxr_def.hpp"
 #include "libxr_mem.hpp"
 #include "libxr_type.hpp"
@@ -79,7 +71,7 @@ inline uint16_t FloatToUintClamped(float value, float minimum, float maximum) {
 #define DM8009_KD_MIN (0.0f)
 #define DM8009_KD_MAX (5.0f)
 
-class DMMotor : public LibXR::Application, public Motor {
+class DMMotor : public Motor {
  public:
   /*电机型号*/
   enum class Model : uint8_t {
@@ -93,7 +85,6 @@ class DMMotor : public LibXR::Application, public Motor {
     Model model;
     bool reverse;
     uint16_t can_id;
-    const char* can_bus_name;
   };
 
   /*量程*/
@@ -109,18 +100,13 @@ class DMMotor : public LibXR::Application, public Motor {
 
   /**
    * @brief DMMotor 的构造函数
-   * @param hw
-   * @param app
    * @param param 电机参数 (电机型号 是否反转 CANID CanBusName)
    */
-  DMMotor(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-          const Param& param)
+  DMMotor(LibXR::CAN& can, const Param& param)
       : param_(param),
         feedback_{},
         startup_time_(LibXR::Timebase::GetMicroseconds()),
-        can_(hw.template FindOrExit<LibXR::CAN>({param_.can_bus_name})) {
-    UNUSED(app);
-
+        can_((&can)) {
     switch (param_.model) {
       case Model::MOTOR_DM4310:
         lsb_.P_MAX = DM4310_PMAX;
@@ -228,7 +214,7 @@ class DMMotor : public LibXR::Application, public Motor {
   /*将当前位置设成零点*/
   void SaveZeroPoint() override { SendSpecialCommand(0xFE); }
 
-  void OnMonitor() override {}
+  void OnMonitor() {}
 
  private:
   static constexpr uint64_t STARTUP_GRACE_US = 200000U;
