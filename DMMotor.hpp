@@ -102,11 +102,14 @@ class DMMotor : public Motor {
    * @brief DMMotor 的构造函数
    * @param param 电机参数 (电机型号 是否反转 CANID CanBusName)
    */
-  DMMotor(LibXR::CAN& can, const Param& param)
+  DMMotor(LibXR::CAN& can,
+          const Param& param = {.model = DMMotor::Model::MOTOR_DM4310,
+                                .reverse = false,
+                                .can_id = 1})
       : param_(param),
         feedback_{},
         startup_time_(LibXR::Timebase::GetMicroseconds()),
-        can_((&can)) {
+        can_(&can) {
     switch (param_.model) {
       case Model::MOTOR_DM4310:
         lsb_.P_MAX = DM4310_PMAX;
