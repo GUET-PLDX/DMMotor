@@ -106,9 +106,9 @@ class DMMotor : public Motor {
           const Param& param = {.model = DMMotor::Model::MOTOR_DM4310,
                                 .reverse = false,
                                 .can_id = 1})
-      : param_(param),
-        feedback_{},
+      : feedback_{},
         startup_time_(LibXR::Timebase::GetMicroseconds()),
+        param_(param),
         can_(&can) {
     switch (param_.model) {
       case Model::MOTOR_DM4310:
@@ -222,12 +222,13 @@ class DMMotor : public Motor {
  private:
   static constexpr uint64_t STARTUP_GRACE_US = 200000U;
   static constexpr uint64_t FEEDBACK_TIMEOUT_US = 150000U;
-  Param param_;
-  LSB lsb_;
   Motor::Feedback feedback_;
+  bool feedback_received_ = false;
   LibXR::MicrosecondTimestamp startup_time_{};
   LibXR::MicrosecondTimestamp last_online_time_{};
-  bool feedback_received_ = false;
+
+  Param param_;
+  LSB lsb_;
   LibXR::CAN* can_;
   LibXR::MPMCQueue<LibXR::CAN::ClassicPack> recv_queue_{2};
 
