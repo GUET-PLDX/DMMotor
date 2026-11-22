@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 
 #include "../DMMotor.hpp"
@@ -8,6 +9,37 @@
 #include "libxr_def.hpp"
 
 int main() {
+  const auto MODE_WRITE = DMMotorCodec::MakeParameterWriteFrame(
+      0x0123U, DMMotorCodec::CONTROL_MODE_REGISTER,
+      DMMotorCodec::POSITION_VELOCITY_MODE);
+  assert(MODE_WRITE.id == 0x7FFU);
+  assert(MODE_WRITE.type == LibXR::CAN::Type::STANDARD && MODE_WRITE.dlc == 8);
+  assert(MODE_WRITE.data[0] == 0x23U && MODE_WRITE.data[1] == 0x01U);
+  assert(MODE_WRITE.data[2] == 0x55U && MODE_WRITE.data[3] == 0x0AU);
+  assert(MODE_WRITE.data[4] == 2U);
+  for (int i = 5; i < 8; ++i) assert(MODE_WRITE.data[i] == 0U);
+
+  const auto SAVE = DMMotorCodec::MakeSaveParametersFrame(0x0123U);
+  assert(SAVE.id == 0x7FFU);
+  assert(SAVE.type == LibXR::CAN::Type::STANDARD && SAVE.dlc == 8);
+  assert(SAVE.data[0] == 0x23U && SAVE.data[1] == 0x01U);
+  assert(SAVE.data[2] == 0xAAU && SAVE.data[3] == 0x01U);
+  for (int i = 4; i < 8; ++i) assert(SAVE.data[i] == 0U);
+
+  const float target_position = 1.25f;
+  const float max_velocity = 2.5f;
+  const auto POSITION_VELOCITY = DMMotorCodec::MakePositionVelocityFrame(
+      0x0123U, target_position, max_velocity);
+  assert(POSITION_VELOCITY.id == 0x223U);
+  assert(POSITION_VELOCITY.type == LibXR::CAN::Type::STANDARD &&
+         POSITION_VELOCITY.dlc == 8);
+  const uint8_t expected_position[] = {0x00U, 0x00U, 0xA0U, 0x3FU};
+  const uint8_t expected_velocity[] = {0x00U, 0x00U, 0x20U, 0x40U};
+  for (int i = 0; i < 4; ++i) {
+    assert(POSITION_VELOCITY.data[i] == expected_position[i]);
+    assert(POSITION_VELOCITY.data[i + 4] == expected_velocity[i]);
+  }
+
   LibXR::CAN::ClassicPack frame{};
   frame.type = LibXR::CAN::Type::STANDARD;
   frame.dlc = 8;

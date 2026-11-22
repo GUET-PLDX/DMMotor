@@ -9,6 +9,7 @@ depends: []
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 #include "Motor.hpp"
 #include "can.hpp"
@@ -19,8 +20,65 @@ depends: []
 #include "libxr_type.hpp"
 
 namespace DMMotorCodec {
+inline constexpr uint16_t PARAMETER_CAN_ID = 0x7FFU;
+inline constexpr uint8_t WRITE_PARAMETER_COMMAND = 0x55U;
+inline constexpr uint8_t SAVE_PARAMETER_COMMAND = 0xAAU;
+inline constexpr uint8_t CONTROL_MODE_REGISTER = 0x0AU;
+inline constexpr uint32_t POSITION_VELOCITY_MODE = 2U;
+
+inline void StoreUint32LittleEndian(uint8_t* destination, uint32_t value) {
+  for (uint8_t i = 0; i < 4U; ++i) {
+    destination[i] = static_cast<uint8_t>((value >> (8U * i)) & 0xFFU);
+  }
+}
+
+inline void StoreFloatLittleEndian(uint8_t* destination, float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  StoreUint32LittleEndian(destination, bits);
+}
+
 inline bool IsFeedbackFrame(const LibXR::CAN::ClassicPack& pack) {
   return pack.type == LibXR::CAN::Type::STANDARD && pack.dlc == 8;
+}
+
+inline LibXR::CAN::ClassicPack MakeParameterWriteFrame(uint16_t motor_id,
+                                                       uint8_t reg,
+                                                       uint32_t value) {
+  LibXR::CAN::ClassicPack pack{};
+  pack.id = PARAMETER_CAN_ID;
+  pack.type = LibXR::CAN::Type::STANDARD;
+  pack.dlc = 8;
+  pack.data[0] = static_cast<uint8_t>(motor_id & 0xFFU);
+  pack.data[1] = static_cast<uint8_t>((motor_id >> 8U) & 0xFFU);
+  pack.data[2] = WRITE_PARAMETER_COMMAND;
+  pack.data[3] = reg;
+  StoreUint32LittleEndian(&pack.data[4], value);
+  return pack;
+}
+
+inline LibXR::CAN::ClassicPack MakeSaveParametersFrame(uint16_t motor_id) {
+  LibXR::CAN::ClassicPack pack{};
+  pack.id = PARAMETER_CAN_ID;
+  pack.type = LibXR::CAN::Type::STANDARD;
+  pack.dlc = 8;
+  pack.data[0] = static_cast<uint8_t>(motor_id & 0xFFU);
+  pack.data[1] = static_cast<uint8_t>((motor_id >> 8U) & 0xFFU);
+  pack.data[2] = SAVE_PARAMETER_COMMAND;
+  pack.data[3] = 0x01U;
+  return pack;
+}
+
+inline LibXR::CAN::ClassicPack MakePositionVelocityFrame(uint16_t motor_id,
+                                                         float position,
+                                                         float velocity) {
+  LibXR::CAN::ClassicPack pack{};
+  pack.id = 0x100U + motor_id;
+  pack.type = LibXR::CAN::Type::STANDARD;
+  pack.dlc = 8;
+  StoreFloatLittleEndian(&pack.data[0], position);
+  StoreFloatLittleEndian(&pack.data[4], velocity);
+  return pack;
 }
 
 struct MitCommand {
@@ -85,6 +143,7 @@ class DMMotor : public Motor {
     Model model;
     bool reverse;
     uint16_t can_id;
+    float position_mapping_max_rad = 0.0f;
   };
 
   /*量程*/
@@ -105,7 +164,8 @@ class DMMotor : public Motor {
   DMMotor(LibXR::CAN& can,
           const Param& param = {.model = DMMotor::Model::MOTOR_DM4310,
                                 .reverse = false,
-                                .can_id = 1})
+                                .can_id = 1,
+                                .position_mapping_max_rad = 0.0f})
       : feedback_{},
         startup_time_(LibXR::Timebase::GetMicroseconds()),
         param_(param),
@@ -139,6 +199,9 @@ class DMMotor : public Motor {
         lsb_.KP_MAX = 0;
         break;
     }
+    if (param_.position_mapping_max_rad > 0.0f) {
+      lsb_.P_MAX = param_.position_mapping_max_rad;
+    }
     /* 强制规定达妙电机反馈id=自身id+10 */
     uint16_t feedback_id_to_register = 0x10 + param_.can_id;
 
@@ -164,12 +227,14 @@ class DMMotor : public Motor {
   LibXR::ErrorCode Update() override {
     const auto NOW = LibXR::Timebase::GetMicroseconds();
     bool get_feedback = false;
-    LibXR::CAN::ClassicPack pack;
-    while (recv_queue_.Pop(pack) == LibXR::ErrorCode::OK) {
-      if (!DMMotorCodec::IsFeedbackFrame(pack)) {
+    TimestampedFeedback received;
+    while (recv_queue_.Pop(received) == LibXR::ErrorCode::OK) {
+      if (!DMMotorCodec::IsFeedbackFrame(received.pack)) {
         continue;
       }
-      Decode(pack);
+      Decode(received.pack);
+      feedback_.received_time_us = received.received_time_us;
+      ++feedback_.sequence;
       get_feedback = true;
     }
 
@@ -217,6 +282,27 @@ class DMMotor : public Motor {
   /*将当前位置设成零点*/
   void SaveZeroPoint() override { SendSpecialCommand(0xFE); }
 
+  /**
+   * @brief Set the driver's control mode to position-velocity (register 0x0A =
+   * 2).
+   * @note The motor must be disabled. This change is volatile until
+   * SaveParameters().
+   */
+  void SetPositionVelocityMode() {
+    can_->AddMessage(DMMotorCodec::MakeParameterWriteFrame(
+        param_.can_id, DMMotorCodec::CONTROL_MODE_REGISTER,
+        DMMotorCodec::POSITION_VELOCITY_MODE));
+  }
+
+  /**
+   * @brief Persist pending driver parameter changes to flash.
+   * @note The manual requires the motor to be disabled. Flash write can take up
+   * to 30 ms.
+   */
+  void SaveParameters() {
+    can_->AddMessage(DMMotorCodec::MakeSaveParametersFrame(param_.can_id));
+  }
+
   void OnMonitor() {}
 
  private:
@@ -230,7 +316,11 @@ class DMMotor : public Motor {
   Param param_;
   LSB lsb_;
   LibXR::CAN* can_;
-  LibXR::MPMCQueue<LibXR::CAN::ClassicPack> recv_queue_{2};
+  struct TimestampedFeedback {
+    LibXR::CAN::ClassicPack pack;
+    uint64_t received_time_us;
+  };
+  LibXR::MPMCQueue<TimestampedFeedback> recv_queue_{2};
 
   /**
    * @brief CAN 接收回调的静态包装函数
@@ -243,7 +333,9 @@ class DMMotor : public Motor {
   static void RxCallback(bool in_isr, DMMotor* self,
                          const LibXR::CAN::ClassicPack& pack) {
     UNUSED(in_isr);
-    while (self->recv_queue_.Push(pack) != LibXR::ErrorCode::OK) {
+    const TimestampedFeedback received{
+        pack, static_cast<uint64_t>(LibXR::Timebase::GetMicroseconds())};
+    while (self->recv_queue_.Push(received) != LibXR::ErrorCode::OK) {
       self->recv_queue_.Pop();
     }
   }
@@ -328,9 +420,8 @@ class DMMotor : public Motor {
     data[6] = ((KD_U & 0xF) << 4) | ((TOR_U >> 8) & 0xF);
     data[7] = TOR_U & 0xFF;
 
-    uint16_t id = param_.can_id;
     LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
+    tx_pack.id = param_.can_id;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = 8;
     LibXR::Memory::FastCopy(tx_pack.data, data, 8);
@@ -362,21 +453,8 @@ class DMMotor : public Motor {
     float send_pos = param_.reverse ? -pos : pos;
     float send_vel = param_.reverse ? -vel : vel;
 
-    uint8_t data[8];
-    uint8_t* pbuf = reinterpret_cast<uint8_t*>(&send_pos);
-    uint8_t* vbuf = reinterpret_cast<uint8_t*>(&send_vel);
-
-    for (int i = 0; i < 4; ++i) {
-      data[i] = pbuf[i];
-      data[i + 4] = vbuf[i];
-    }
-
-    uint16_t id = param_.can_id;
-    LibXR::CAN::ClassicPack tx_pack{};
-    tx_pack.id = id;
-    tx_pack.type = LibXR::CAN::Type::STANDARD;
-    tx_pack.dlc = 8;
-    LibXR::Memory::FastCopy(tx_pack.data, data, 8);
+    LibXR::CAN::ClassicPack tx_pack = DMMotorCodec::MakePositionVelocityFrame(
+        param_.can_id, send_pos, send_vel);
     can_->AddMessage(tx_pack);
   }
 
