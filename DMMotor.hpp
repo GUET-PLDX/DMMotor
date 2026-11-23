@@ -12,6 +12,7 @@ depends: []
 
 #include "Motor.hpp"
 #include "can.hpp"
+#include "latest_snapshot.hpp"
 #include "float_encoder.hpp"
 #include "libxr.hpp"
 #include "libxr_def.hpp"
@@ -162,20 +163,13 @@ class DMMotor : public Motor {
   void Relax() override { Disable(); }
 
   LibXR::ErrorCode Update() override {
-    const auto NOW = LibXR::Timebase::GetMicroseconds();
-    bool get_feedback = false;
-    LibXR::CAN::ClassicPack pack;
-    while (recv_queue_.Pop(pack) == LibXR::ErrorCode::OK) {
-      if (!DMMotorCodec::IsFeedbackFrame(pack)) {
-        continue;
-      }
-      Decode(pack);
-      get_feedback = true;
-    }
-
-    if (get_feedback) {
+    TimestampedFeedback received;
+    if (feedback_frame_.LoadLatest(received)) {
+      Decode(received.pack);
+      feedback_.received_time_us = received.received_time_us;
+      ++feedback_.sequence;
       feedback_received_ = true;
-      last_online_time_ = NOW;
+      last_online_time_ = received.received_time_us;
     }
 
     return IsOnline() ? LibXR::ErrorCode::OK : LibXR::ErrorCode::NO_RESPONSE;
@@ -230,22 +224,28 @@ class DMMotor : public Motor {
   Param param_;
   LSB lsb_;
   LibXR::CAN* can_;
-  LibXR::MPMCQueue<LibXR::CAN::ClassicPack> recv_queue_{2};
+  struct TimestampedFeedback {
+    LibXR::CAN::ClassicPack pack;
+    uint64_t received_time_us;
+  };
+  LibXR::LatestSnapshot<TimestampedFeedback> feedback_frame_{TimestampedFeedback{}};
 
   /**
    * @brief CAN 接收回调的静态包装函数
    * @details
-   * 将接收到的CAN数据包推入无锁队列中，供后续处理。如果队列已满，则丢弃最旧的数据包。
+   * CAN 接收回调是唯一生产者，所属控制任务的 Update() 是唯一消费者。
    * @param in_isr 指示是否在中断服务程序中调用
-   * @param self 用户提供的参数，这里是 RMMotorContainer 实例的指针
+   * @param self 当前电机实例
    * @param pack 接收到的 CAN 数据包
    */
   static void RxCallback(bool in_isr, DMMotor* self,
                          const LibXR::CAN::ClassicPack& pack) {
     UNUSED(in_isr);
-    while (self->recv_queue_.Push(pack) != LibXR::ErrorCode::OK) {
-      self->recv_queue_.Pop();
+    if (!DMMotorCodec::IsFeedbackFrame(pack)) {
+      return;
     }
+    self->feedback_frame_.Store(
+        {pack, static_cast<uint64_t>(LibXR::Timebase::GetMicroseconds())});
   }
 
   void Decode(LibXR::CAN::ClassicPack& pack) {
