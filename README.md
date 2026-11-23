@@ -11,8 +11,9 @@
 
 ## 3. 接入步骤
 1. 添加模块并配置 model、reverse、can_id、can_bus_name。
-2. 上电后先检查反馈在线，再启用控制。
-3. 上层业务通过 Motor 接口调用本模块。
+2. 确认电机处于失能状态；首次配置时调用 `SetPositionVelocityMode()` 将寄存器 `0x0A` 写为 `2`，然后调用 `SaveParameters()` 持久化。手册要求保存命令只能在失能状态发送，写 Flash 最长约 30 ms；不要在每次控制循环或每次启动时反复保存。
+3. 上电后检查反馈在线，再启用控制。调用 `MODE_POSITION` 时，模块按手册发送 CAN ID `0x100 + can_id`，数据为小端 `float position` 和 `float velocity`。
+4. 上层业务通过 Motor 接口调用本模块。
 
 标准命令流程：
     xrobot_add_mod DMMotor --instance-id dmmotor
@@ -45,4 +46,4 @@ Modules/DMMotor/DMMotor.hpp
 
 使用 xrobot 1.0.1 的 `module` / 有序 `args`；构造函数显式注入外设与服务，实例按依赖顺序创建。参数名和顺序以头文件中的构造函数为准，固件示例见 `User/RobotConfig/`。
 
-保留 PLDX 控制、协议、超时与离线保护。 `OnMonitor()` 由生成的监控循环直接调用。
+保留 PLDX 控制、协议、超时与离线保护。DM-J4310 默认运行模式由驱动器参数决定；`SetPositionVelocityMode()` 是显式的易失模式切换，掉电后要依赖已保存的模式恢复。`OnMonitor()` 由生成的监控循环直接调用。
